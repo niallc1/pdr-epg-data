@@ -8,7 +8,7 @@ on:
 env:
   # Replace 'my-epg-alerts-12345' with your custom ntfy topic name,
   # or store your full ntfy URL in Repository Secrets as NTFY_URL
-  NTFY_URL: ${{ secrets.NTFY_URL || 'https://ntfy.sh/pdr-epg-alerts-jj78kdgti40' }}
+  NTFY_URL: ${{ secrets.NTFY_URL }}
 
 jobs:
   epg-pipeline:
