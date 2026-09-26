@@ -1,0 +1,105 @@
+name: Fetch and Publish EPG Data
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # Automatically runs every night at 04:00 UTC
+  workflow_dispatch: # Allows manual trigger from the GitHub UI
+
+env:
+  # Replace 'my-epg-alerts-12345' with your custom ntfy topic name,
+  # or store your full ntfy URL in Repository Secrets as NTFY_URL
+  NTFY_URL: ${{ secrets.NTFY_URL || 'https://ntfy.sh/pdr-epg-alerts-jj78kdgti40' }}
+
+jobs:
+  epg-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Fetch Portugal (PT) EPG Feed
+        run: |
+          PT_SUCCESS=false
+          PT_MIRRORS=(
+            "http://rytecepg.wanwizard.eu/rytecPT.xz"
+            "http://epg.vuplus-community.net/rytecPT.xz"
+            "http://rytec.sat-universe.com/rytecPT.xz"
+          )
+
+          for url in "${PT_MIRRORS[@]}"; do
+            echo "Attempting PT download from: $url"
+            if curl -s -f -A "EPGImport/1.0 (Linux; Enigma2)" -L -o temp_pt.xz "$url"; then
+              SIZE=$(wc -c < temp_pt.xz)
+              if [ "$SIZE" -gt 50000 ]; then
+                echo "Successfully downloaded PT feed ($SIZE bytes)."
+                unxz -f temp_pt.xz
+                mv temp_pt guide-pt.xml
+                PT_SUCCESS=true
+                break
+              else
+                echo "File from $url was too small ($SIZE bytes). Trying next mirror..."
+                rm -f temp_pt.xz
+              fi
+            else
+              echo "HTTP download failed for $url. Trying next mirror..."
+            fi
+          done
+
+          if [ "$PT_SUCCESS" = false ]; then
+            echo "PT_FAILED=true" >> $GITHUB_ENV
+            echo "::error::All Portugal EPG mirrors failed."
+          fi
+
+      - name: Fetch United Kingdom (UK) EPG Feed
+        run: |
+          UK_SUCCESS=false
+          UK_MIRRORS=(
+            "http://rytecepg.wanwizard.eu/rytecUK_Basic.xz"
+            "http://epg.vuplus-community.net/rytecUK_Basic.xz"
+            "http://rytec.sat-universe.com/rytecUK_Basic.xz"
+          )
+
+          for url in "${UK_MIRRORS[@]}"; do
+            echo "Attempting UK download from: $url"
+            if curl -s -f -A "EPGImport/1.0 (Linux; Enigma2)" -L -o temp_uk.xz "$url"; then
+              SIZE=$(wc -c < temp_uk.xz)
+              if [ "$SIZE" -gt 50000 ]; then
+                echo "Successfully downloaded UK feed ($SIZE bytes)."
+                unxz -f temp_uk.xz
+                mv temp_uk guide-uk.xml
+                UK_SUCCESS=true
+                break
+              else
+                echo "File from $url was too small ($SIZE bytes). Trying next mirror..."
+                rm -f temp_uk.xz
+              fi
+            else
+              echo "HTTP download failed for $url. Trying next mirror..."
+            fi
+          done
+
+          if [ "$UK_SUCCESS" = false ]; then
+            echo "UK_FAILED=true" >> $GITHUB_ENV
+            echo "::error::All UK EPG mirrors failed."
+          fi
+
+      - name: Send ntfy Alert on Failure
+        if: env.PT_FAILED == 'true' || env.UK_FAILED == 'true'
+        run: |
+          MSG="EPG Alert:"
+          if [ "${{ env.PT_FAILED }}" = "true" ]; then MSG="$MSG [Portugal Feed Failed]"; fi
+          if [ "${{ env.UK_FAILED }}" = "true" ]; then MSG="$MSG [UK Feed Failed]"; fi
+
+          echo "Sending alert to ntfy..."
+          curl -H "Title: EPG Update Failure" \
+               -H "Priority: high" \
+               -H "Tags: warning,tv" \
+               -d "$MSG" \
+               "${{ env.NTFY_URL }}"
+
+      - name: Deploy Guides to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
