@@ -5,9 +5,10 @@ on:
     - cron: '0 4 * * *' # Automatically runs every night at 04:00 UTC
   workflow_dispatch: # Allows manual trigger from the GitHub UI
 
+permissions:
+  contents: write # Required for pushing to the gh-pages branch
+
 env:
-  # Replace 'my-epg-alerts-12345' with your custom ntfy topic name,
-  # or store your full ntfy URL in Repository Secrets as NTFY_URL
   NTFY_URL: ${{ secrets.NTFY_URL }}
 
 jobs:
@@ -24,6 +25,7 @@ jobs:
           PT_MIRRORS=(
             "http://rytecepg.wanwizard.eu/rytecPT.xz"
             "http://epg.vuplus-community.net/rytecPT.xz"
+            "http://www.xmltvepg.nl/rytecPT.xz"
             "http://rytec.sat-universe.com/rytecPT.xz"
           )
 
@@ -49,6 +51,7 @@ jobs:
           if [ "$PT_SUCCESS" = false ]; then
             echo "PT_FAILED=true" >> $GITHUB_ENV
             echo "::error::All Portugal EPG mirrors failed."
+            exit 1
           fi
 
       - name: Fetch United Kingdom (UK) EPG Feed
@@ -57,6 +60,7 @@ jobs:
           UK_MIRRORS=(
             "http://rytecepg.wanwizard.eu/rytecUK_Basic.xz"
             "http://epg.vuplus-community.net/rytecUK_Basic.xz"
+            "http://www.xmltvepg.nl/rytecUK_Basic.xz"
             "http://rytec.sat-universe.com/rytecUK_Basic.xz"
           )
 
@@ -82,24 +86,27 @@ jobs:
           if [ "$UK_SUCCESS" = false ]; then
             echo "UK_FAILED=true" >> $GITHUB_ENV
             echo "::error::All UK EPG mirrors failed."
+            exit 1
           fi
 
       - name: Send ntfy Alert on Failure
-        if: env.PT_FAILED == 'true' || env.UK_FAILED == 'true'
+        if: failure()
         run: |
           MSG="EPG Alert:"
           if [ "${{ env.PT_FAILED }}" = "true" ]; then MSG="$MSG [Portugal Feed Failed]"; fi
           if [ "${{ env.UK_FAILED }}" = "true" ]; then MSG="$MSG [UK Feed Failed]"; fi
 
-          echo "Sending alert to ntfy..."
-          curl -H "Title: EPG Update Failure" \
-               -H "Priority: high" \
-               -H "Tags: warning,tv" \
-               -d "$MSG" \
-               "${{ env.NTFY_URL }}"
+          if [ -n "${{ env.NTFY_URL }}" ]; then
+            echo "Sending alert to ntfy..."
+            curl -H "Title: EPG Update Failure" \
+                 -H "Priority: high" \
+                 -H "Tags: warning,tv" \
+                 -d "$MSG" \
+                 "${{ env.NTFY_URL }}"
+          fi
 
       - name: Deploy Guides to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./
